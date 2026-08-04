@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: reading-checkin
+    env: node
+    buildCommand: npm ci
+    startCommand: npm start
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # 持久盘路径：运行时数据写这里，重启不丢
+      - key: DATA_FILE
+        value: /data/data.json
+      - key: MEDIA_DIR
+        value: /data/images
+      # 以下两项为密钥，sync:false 表示在 Render 后台手动填写，绝不写入代码/仓库
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+    # 持久盘：存放 data.json 与图片，避免 ephemeral 文件系统丢失
+    disks:
+      - name: reading-data
+        mountPath: /data
+        sizeGB: 1

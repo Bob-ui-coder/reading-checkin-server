@@ -1,0 +1,16 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reading-checkin-'));
+process.env.DATA_FILE = path.join(tempDir, 'data.json');
+process.env.ADMIN_PASSWORD = 'test-only';
+const app = require('../server');
+let server, baseUrl;
+test.before(async () => { await new Promise(resolve => { server = app.listen(0, '127.0.0.1', resolve); }); baseUrl = `http://127.0.0.1:${server.address().port}`; });
+test.after(() => server.close());
+test('health does not expose secrets', async () => { const response=await fetch(`${baseUrl}/api/health`); const payload=await response.json(); assert.equal(response.status,200); assert.equal(payload.ok,true); assert.equal(JSON.stringify(payload).includes('test-only'),false); });
+test('groups endpoint exposes only display structure', async () => { const response=await fetch(`${baseUrl}/api/groups`); const payload=await response.json(); assert.equal(response.status,200); assert.ok(Array.isArray(payload)); assert.equal(JSON.stringify(payload).includes('test-only'),false); });
+test('creates, updates and reads a check-in', async () => { const request=(text)=>fetch(`${baseUrl}/api/checkin`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'测试成员',day:4,text})}); assert.equal((await request('先提出问题，再带着问题阅读。')).status,201); assert.equal((await request('更新后的心得')).status,200); const records=await(await fetch(`${baseUrl}/api/records`)).json(); assert.equal(records.filter(r=>r.key==='测试成员_4').length,1); assert.equal(records.find(r=>r.key==='测试成员_4').text,'更新后的心得'); });
+test('rejects invalid input and protects destructive routes', async () => { const invalid=await fetch(`${baseUrl}/api/checkin`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'A',day:0,text:'x'})}); assert.equal(invalid.status,400); assert.equal((await fetch(`${baseUrl}/api/reset`,{method:'POST'})).status,401); });
