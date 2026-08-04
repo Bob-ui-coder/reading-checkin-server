@@ -1,6 +1,5 @@
 import express from 'express';
-import { kv } from '@vercel/kv';
-import { put, del } from '@vercel/blob';
+import { put, head, del as blobDel } from '@vercel/blob';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -10,7 +9,7 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '6mb' }));
 app.use(express.static(path.join(process.cwd(), 'public'), { etag: true, maxAge: '1h' }));
 
-const KV_KEY = 'reading-checkin-data';
+const DATA_BLOB_KEY = 'reading-data/data.json';
 const SEED_DATA = path.join(process.cwd(), 'data.json');
 const SEED_IMG_DIR = path.join(process.cwd(), 'data', 'images');
 
@@ -18,31 +17,37 @@ function cleanText(value, maxLength) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
+// ── 纯 Blob 存储：数据 JSON 当文件存 ──
+
 async function loadData() {
   try {
-    const raw = await kv.get(KV_KEY);
-    if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const b = await head(DATA_BLOB_KEY);
+    if (b) {
+      const res = await fetch(b.url);
+      if (res.ok) return await res.json();
+    }
   } catch (err) {
-    console.error('读取 KV 失败:', err.message);
+    console.error('读取 Blob 数据失败:', err.message);
   }
   return { records: [], groups: [] };
 }
 
 async function saveData(data) {
-  await kv.set(KV_KEY, JSON.stringify(data));
+  const body = JSON.stringify(data);
+  const buf = Buffer.from(body, 'utf8');
+  await put(DATA_BLOB_KEY, buf, { access: 'private', contentType: 'application/json' });
 }
 
-// 首次冷启动：若 KV 为空，从仓库内置 data.json 初始化，并把 data/images 上传到 Blob
+// 首次冷启动：若 Blob 里没有数据，从仓库内置 data.json 初始化，并把 data/images 上传到 Blob
 async function seedIfEmpty() {
   try {
-    const existing = await kv.get(KV_KEY);
+    const existing = await head(DATA_BLOB_KEY);
     if (existing) {
-      console.log('KV 已有数据，跳过种子');
+      console.log('Blob 已有数据，跳过种子');
       return;
     }
   } catch (err) {
-    console.error('种子检查失败(可能未配置 KV):', err.message);
-    return;
+    // 不存在 → 需要种子
   }
   let seed;
   try {
@@ -51,6 +56,7 @@ async function seedIfEmpty() {
     console.error('读取种子 data.json 失败:', err.message);
     return;
   }
+  // 上传历史图片到 Blob
   if (fs.existsSync(SEED_IMG_DIR)) {
     for (const f of fs.readdirSync(SEED_IMG_DIR)) {
       try {
@@ -65,8 +71,8 @@ async function seedIfEmpty() {
       }
     }
   }
-  await kv.set(KV_KEY, JSON.stringify(seed));
-  console.log('已从种子初始化 KV:', (seed.records || []).length, '条记录');
+  await saveData(seed);
+  console.log('已从种子初始化 Blob:', (seed.records || []).length, '条记录');
 }
 
 try {
@@ -83,7 +89,7 @@ function requireAdmin(req, res, next) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, aiEnabled: Boolean(process.env.AI_API_KEY), storage: 'vercel-kv' });
+  res.json({ ok: true, aiEnabled: Boolean(process.env.AI_API_KEY), storage: 'vercel-blob' });
 });
 
 app.get('/api/records', async (req, res) => {
@@ -181,7 +187,7 @@ app.delete('/api/records/:name/:day', requireAdmin, async (req, res) => {
   if (before === data.records.length) return res.status(404).json({ error: '记录不存在' });
   await saveData(data);
   if (removed && typeof removed.image === 'string' && removed.image.includes('blob.vercel-storage.com')) {
-    try { await del(removed.image); } catch (e) { console.error('删除 Blob 图片失败:', e.message); }
+    try { await blobDel(removed.image); } catch (e) { console.error('删除 Blob 图片失败:', e.message); }
   }
   res.json({ success: true });
 });
