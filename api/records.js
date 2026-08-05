@@ -1,8 +1,8 @@
-import { json, lazySeed, loadData, saveData, requireAdmin, cleanText } from '../_lib.mjs';
-import { del as blobDel } from '@vercel/blob';
+// 最小化诊断版：不调 loadData，直接返回静态数据
+// 如果这个能通 → 问题在 @vercel/blob / loadData
+// 如果这个也崩 → 问题在模块加载 / 依赖
 
 export default async function handler(req, res) {
-  lazySeed();
   const method = (req.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {
@@ -13,36 +13,17 @@ export default async function handler(req, res) {
   }
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  // GET /api/records
+  // GET — 最小化测试
   if (method === 'GET') {
-    try {
-      const records = (await loadData()).records.sort((a, b) => Number(b.time) - Number(a.time));
-      return json(res, records);
-    } catch (err) {
-      console.error('GET /api/records 错误:', err.message);
-      return json(res, { error: err.message, hint: 'records 接口异常' }, 500);
-    }
+    return res.status(200).json([
+      { name: '_test_', text: '诊断正常', day: 1, time: Date.now(), key: '_test__1' }
+    ]);
   }
 
-  // DELETE /api/records/:name/:day
+  // DELETE — 最小化测试
   if (method === 'DELETE') {
-    const auth = requireAdmin(req);
-    if (!auth.ok) return json(res, { error: auth.error }, auth.status);
-    // Vercel passes query params; path is /api/records
-    const url = new URL(req.url || '/', `http://${req.headers.host}`);
-    const parts = url.pathname.replace('/api/records/', '').split('/').filter(Boolean);
-    const key = `${cleanText(parts[0], 30)}_${Number.parseInt(parts[1], 10)}`;
-    const data = await loadData();
-    const before = data.records.length;
-    const removed = data.records.find(r => r.key === key);
-    data.records = data.records.filter(r => r.key !== key);
-    if (before === data.records.length) return json(res, { error: '记录不存在' }, 404);
-    await saveData(data);
-    if (removed?.image?.includes('blob.vercel-storage.com')) {
-      try { await blobDel(removed.image); } catch (e) { console.error('删除 Blob 图片失败:', e.message); }
-    }
-    return json(res, { success: true });
+    return res.status(200).json({ success: true, test: true });
   }
 
-  return json(res, { error: '方法不允许' }, 405);
+  return res.status(405).json({ error: '方法不允许' });
 }
