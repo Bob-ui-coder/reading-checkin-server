@@ -1,1 +1,1 @@
-{"version": 2, "buildCommand": "npm install", "outputDirectory": ".", "functions": {"api/**/*.js": {"maxDuration": 60}}}
+{"version": 2, "installCommand": "exit 0", "functions": {"api/**/*.js": {"maxDuration": 60}}}

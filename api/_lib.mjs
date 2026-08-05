@@ -1,14 +1,13 @@
-import { put, head, del as blobDel } from '@vercel/blob';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+// 纯 Gist API 存储 —— 不依赖 @vercel/blob / KV / 任何 Vercel 扩展
+// 读记录：公开 Gist raw（无需认证，国内走 jsDelivr 改写图片域名）
+// 读分组：仓库静态 data.json（含组长/成员，只读）
+// 写：GitHub Gist API（需 GITHUB_TOKEN 环境变量，仅打卡/删除/重置时用）
 
-export const DATA_BLOB_KEY = 'reading-data/data.json';
-const SEED_DATA = path.join(process.cwd(), 'data.json');
-const SEED_IMG_DIR = path.join(process.cwd(), 'data', 'images');
-
-let _seeded = false;
-let _seeding = null;
+const GIST_ID = process.env.GIST_ID || '9118572982a150ace89f2ba81ecb7999';
+const GIST_RAW = `https://gist.githubusercontent.com/Bob-ui-coder/${GIST_ID}/raw/data.json`;
+const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
+const GH_TOKEN = process.env.GITHUB_TOKEN || '';
+const REPO_DATA_URL = 'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin-server@main/data.json';
 
 export function cleanText(value, maxLength) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -18,53 +17,70 @@ export function json(res, data, status = 200) {
   res.status(status).header('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(data));
 }
 
+// 兼容旧调用：Gist 即实时数据源，无需种子逻辑
+export function lazySeed() {}
+
+// 把图片地址改写为国内更快的 jsDelivr CDN
+function rewriteImage(url) {
+  if (typeof url !== 'string') return url;
+  return url
+    .replace(
+      'https://raw.githubusercontent.com/Bob-ui-coder/reading-checkin/main/docs/images/',
+      'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin@main/docs/images/'
+    )
+    .replace(
+      '/media/',
+      'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin-server@main/data/images/'
+    );
+}
+
 export async function loadData() {
+  let records = [];
   try {
-    const b = await head(DATA_BLOB_KEY);
-    if (b) {
-      try {
-        const res = await fetch(b.url, { headers: { Accept: 'application/json' } });
-        if (!res.ok) throw new Error(`Blob HTTP ${res.status} ${res.statusText}`);
-        const text = await res.text();
-        return JSON.parse(text);
-      } catch (fetchErr) {
-        console.error('fetch Blob 内容失败:', fetchErr.message, 'url:', (b.url || '').slice(0, 80));
-        throw new Error('BLOB_FETCH_FAIL: ' + fetchErr.message);
-      }
+    const res = await fetch(GIST_RAW, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Gist raw HTTP ${res.status}`);
+    const d = await res.json();
+    records = Array.isArray(d.records) ? d.records : [];
+  } catch (err) {
+    console.error('loadData(records) 失败:', err.message);
+  }
+
+  let groups = [];
+  try {
+    const res = await fetch(REPO_DATA_URL, { headers: { Accept: 'application/json' } });
+    if (res.ok) {
+      const d = await res.json();
+      groups = Array.isArray(d.groups) ? d.groups : [];
     }
   } catch (err) {
-    if (err.message.startsWith('BLOB_FETCH_FAIL')) throw err;
-    console.error('读取 Blob 头信息失败:', err.message);
+    console.error('loadData(groups) 失败:', err.message);
   }
-  return { records: [], groups: [] };
+
+  for (const r of records) {
+    if (r && typeof r.image === 'string') r.image = rewriteImage(r.image);
+  }
+  return { records, groups };
 }
 
 export async function saveData(data) {
-  await put(DATA_BLOB_KEY, Buffer.from(JSON.stringify(data), 'utf8'), { access: 'private', contentType: 'application/json' });
-}
-
-export function lazySeed() {
-  if (_seeded || _seeding) return;
-  _seeding = (async () => {
-    try {
-      try { const e = await head(DATA_BLOB_KEY); if (e) { _seeded = true; return; } } catch (_) {}
-      let seed;
-      try { seed = JSON.parse(fs.readFileSync(SEED_DATA, 'utf8')); } catch (err) { console.error('读取种子 data.json 失败:', err.message); return; }
-      if (fs.existsSync(SEED_IMG_DIR)) {
-        for (const f of fs.readdirSync(SEED_IMG_DIR)) {
-          try {
-            const buf = fs.readFileSync(path.join(SEED_IMG_DIR, f));
-            const ext = path.extname(f).slice(1) || 'png';
-            const blob = await put(`reading-images/${f}`, buf, { access: 'public', contentType: `image/${ext}` });
-            for (const r of (seed.records || [])) { if (r.image === `/media/${f}`) r.image = blob.url; }
-          } catch (err) { console.error('上传图片失败', f, err.message); }
-        }
-      }
-      await saveData(seed);
-      console.log('✅ 种子初始化完成:', (seed.records || []).length, '条记录');
-    } catch (err) { console.error('❌ 种子初始化异常:', err.message); }
-    finally { _seeded = true; _seeding = null; }
-  })();
+  if (!GH_TOKEN) throw new Error('未配置 GITHUB_TOKEN，无法写入');
+  const res = await fetch(GIST_API, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${GH_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'reading-checkin'
+    },
+    body: JSON.stringify({
+      description: '读书打卡数据',
+      files: { 'data.json': { content: JSON.stringify(data) } }
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Gist 写入 HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
 }
 
 export function requireAdmin(req) {
@@ -74,22 +90,29 @@ export function requireAdmin(req) {
   return { ok: true };
 }
 
-export async function imageToUrl(dataUrl) {
-  const m = /^data:(image\/\w+);base64,(.+)$/i.exec(dataUrl || '');
-  if (!m) return null;
-  const buffer = Buffer.from(m[2], 'base64');
-  if (buffer.length > 2 * 1024 * 1024) return false;
-  const ext = m[1].split('/')[1];
-  const name = `reading-images/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
-  const blob = await put(name, buffer, { access: 'public', contentType: m[1] });
-  return blob.url;
+// 处理打卡图片：base64 直接存；URL 直接存；非图片返回 null；超 2MB 返回 false
+export async function imageToUrl(input) {
+  if (!input || typeof input !== 'string') return null;
+  if (input.startsWith('data:')) {
+    const comma = input.indexOf(',');
+    if (comma <= 0) return null;
+    if (!/image\//.test(input.slice(0, comma))) return null;
+    const bytes = Math.ceil((input.slice(comma + 1).length * 3) / 4);
+    if (bytes > 2 * 1024 * 1024) return false;
+    return input;
+  }
+  if (/^https?:\/\//.test(input)) return input;
+  return null;
 }
 
 export function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch (e) { reject(new Error('无效 JSON')); } });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body || '{}')); }
+      catch (e) { reject(new Error('无效 JSON')); }
+    });
     req.on('error', reject);
   });
 }

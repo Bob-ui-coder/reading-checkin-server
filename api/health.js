@@ -8,5 +8,5 @@ export default async function handler(req, res) {
     return res.status(204).end();
   }
   res.setHeader('Access-Control-Allow-Origin', '*');
-  return json(res, { ok: true, aiEnabled: Boolean(process.env.AI_API_KEY), storage: 'vercel-blob' });
+  return json(res, { ok: true, aiEnabled: Boolean(process.env.AI_API_KEY), storage: 'gist' });
 }
