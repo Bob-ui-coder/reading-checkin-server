@@ -1,1 +1,1 @@
-{"version": 2, "functions": {"api/index.mjs": {"maxDuration": 60}}, "rewrites": [{"source": "/api/(.*)", "destination": "/api/index.mjs"}]}
+{"version": 2, "buildCommand": "npm install", "outputDirectory": ".", "functions": {"api/index.mjs": {"maxDuration": 60}}, "rewrites": [{"source": "/api/(.*)", "destination": "/api/index.mjs"}]}
