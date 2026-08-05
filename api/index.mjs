@@ -7,6 +7,9 @@ const DATA_BLOB_KEY = 'reading-data/data.json';
 const SEED_DATA = path.join(process.cwd(), 'data.json');
 const SEED_IMG_DIR = path.join(process.cwd(), 'data', 'images');
 
+let _seeded = false;
+let _seeding = null;
+
 function cleanText(value, maxLength) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
@@ -32,37 +35,53 @@ async function saveData(data) {
   await put(DATA_BLOB_KEY, Buffer.from(JSON.stringify(data), 'utf8'), { access: 'private', contentType: 'application/json' });
 }
 
-async function seedIfEmpty() {
-  try {
-    const existing = await head(DATA_BLOB_KEY);
-    if (existing) return;
-  } catch (_) {}
-  let seed;
-  try {
-    seed = JSON.parse(fs.readFileSync(SEED_DATA, 'utf8'));
-  } catch (err) {
-    console.error('读取种子 data.json 失败:', err.message);
-    return;
-  }
-  if (fs.existsSync(SEED_IMG_DIR)) {
-    for (const f of fs.readdirSync(SEED_IMG_DIR)) {
+// 懒种子：首次调用时异步触发，不阻塞请求。失败只打日志不影响 API。
+function lazySeed() {
+  if (_seeded || _seeding) return;
+  _seeding = (async () => {
+    try {
+      // 检查 Blob 里是否已有数据
       try {
-        const buf = fs.readFileSync(path.join(SEED_IMG_DIR, f));
-        const ext = path.extname(f).slice(1) || 'png';
-        const blob = await put(`reading-images/${f}`, buf, { access: 'public', contentType: `image/${ext}` });
-        for (const r of (seed.records || [])) {
-          if (r.image === `/media/${f}`) r.image = blob.url;
-        }
-      } catch (err) {
-        console.error('上传图片失败', f, err.message);
-      }
-    }
-  }
-  await saveData(seed);
-  console.log('已从种子初始化 Blob:', (seed.records || []).length, '条记录');
-}
+        const existing = await head(DATA_BLOB_KEY);
+        if (existing) { _seeded = true; return; }
+      } catch (_) {}
 
-try { await seedIfEmpty(); } catch (err) { console.error('seedIfEmpty 异常:', err.message); }
+      // 读仓库内置的 data.json
+      let seed;
+      try {
+        seed = JSON.parse(fs.readFileSync(SEED_DATA, 'utf8'));
+      } catch (err) {
+        console.error('读取种子 data.json 失败:', err.message);
+        return;
+      }
+
+      // 上传图片到 Blob 并替换路径
+      if (fs.existsSync(SEED_IMG_DIR)) {
+        for (const f of fs.readdirSync(SEED_IMG_DIR)) {
+          try {
+            const buf = fs.readFileSync(path.join(SEED_IMG_DIR, f));
+            const ext = path.extname(f).slice(1) || 'png';
+            const blob = await put(`reading-images/${f}`, buf, { access: 'public', contentType: `image/${ext}` });
+            for (const r of (seed.records || [])) {
+              if (r.image === `/media/${f}`) r.image = blob.url;
+            }
+          } catch (err) {
+            console.error('上传图片失败', f, err.message);
+          }
+        }
+      }
+
+      // 写入 Blob
+      await saveData(seed);
+      console.log('✅ 种子初始化完成:', (seed.records || []).length, '条记录');
+    } catch (err) {
+      console.error('❌ 种子初始化异常:', err.message);
+    } finally {
+      _seeded = true;
+      _seeding = null;
+    }
+  })();
+}
 
 function requireAdmin(req) {
   const configured = process.env.ADMIN_PASSWORD;
@@ -95,9 +114,12 @@ function parseBody(req) {
 
 // ── 路由分发 ──
 export default async function handler(req, res) {
+  // 首次请求时触发懒种子（非阻塞）
+  lazySeed();
+
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const method = (req.method || 'GET').toUpperCase();
-  const path = url.pathname;
+  const pathname = url.pathname;
 
   // CORS preflight
   if (method === 'OPTIONS') {
@@ -109,18 +131,18 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   // ── GET /api/health ──
-  if (path === '/api/health' && method === 'GET') {
+  if (pathname === '/api/health' && method === 'GET') {
     return json(res, { ok: true, aiEnabled: Boolean(process.env.AI_API_KEY), storage: 'vercel-blob' });
   }
 
   // ── GET /api/records ──
-  if (path === '/api/records' && method === 'GET') {
+  if (pathname === '/api/records' && method === 'GET') {
     const records = (await loadData()).records.sort((a, b) => Number(b.time) - Number(a.time));
     return json(res, records);
   }
 
   // ── GET /api/groups ──
-  if (path === '/api/groups' && method === 'GET') {
+  if (pathname === '/api/groups' && method === 'GET') {
     const data = await loadData();
     const groups = (data.groups || []).map(g => ({
       name: cleanText(g.name, 40),
@@ -131,7 +153,7 @@ export default async function handler(req, res) {
   }
 
   // ── POST /api/checkin ──
-  if (path === '/api/checkin' && method === 'POST') {
+  if (pathname === '/api/checkin' && method === 'POST') {
     const body = await parseBody(req);
     const name = cleanText(body.name, 30);
     const text = cleanText(body.text, 2000);
@@ -157,7 +179,7 @@ export default async function handler(req, res) {
   }
 
   // ── POST /api/ai-feedback ──
-  if (path === '/api/ai-feedback' && method === 'POST') {
+  if (pathname === '/api/ai-feedback' && method === 'POST') {
     const apiKey = process.env.AI_API_KEY;
     if (!apiKey) return json(res, { error: 'AI 教练尚未由管理员配置' }, 503);
     const body = await parseBody(req);
@@ -188,10 +210,10 @@ export default async function handler(req, res) {
   }
 
   // ── DELETE /api/records/:name/:day ──
-  if (path.startsWith('/api/records/') && method === 'DELETE') {
+  if (pathname.startsWith('/api/records/') && method === 'DELETE') {
     const auth = requireAdmin(req);
     if (!auth.ok) return json(res, { error: auth.error }, auth.status);
-    const parts = path.replace('/api/records/', '').split('/');
+    const parts = pathname.replace('/api/records/', '').split('/');
     const key = `${cleanText(parts[0], 30)}_${Number.parseInt(parts[1], 10)}`;
     const data = await loadData();
     const before = data.records.length;
@@ -206,7 +228,7 @@ export default async function handler(req, res) {
   }
 
   // ── POST /api/reset ──
-  if (path === '/api/reset' && method === 'POST') {
+  if (pathname === '/api/reset' && method === 'POST') {
     const auth = requireAdmin(req);
     if (!auth.ok) return json(res, { error: auth.error }, auth.status);
     await saveData({ records: [] });
@@ -214,7 +236,7 @@ export default async function handler(req, res) {
   }
 
   // ── GET /api/export ──
-  if (path === '/api/export' && method === 'GET') {
+  if (pathname === '/api/export' && method === 'GET') {
     const auth = requireAdmin(req);
     if (!auth.ok) return json(res, { error: auth.error }, auth.status);
     const records = (await loadData()).records.sort((a, b) => Number(b.time) - Number(a.time));
