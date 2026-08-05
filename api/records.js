@@ -15,8 +15,13 @@ export default async function handler(req, res) {
 
   // GET /api/records
   if (method === 'GET') {
-    const records = (await loadData()).records.sort((a, b) => Number(b.time) - Number(a.time));
-    return json(res, records);
+    try {
+      const records = (await loadData()).records.sort((a, b) => Number(b.time) - Number(a.time));
+      return json(res, records);
+    } catch (err) {
+      console.error('GET /api/records 错误:', err.message);
+      return json(res, { error: err.message, hint: 'records 接口异常' }, 500);
+    }
   }
 
   // DELETE /api/records/:name/:day

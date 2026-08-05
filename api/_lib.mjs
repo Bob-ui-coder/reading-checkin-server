@@ -22,11 +22,19 @@ export async function loadData() {
   try {
     const b = await head(DATA_BLOB_KEY);
     if (b) {
-      const res = await fetch(b.url);
-      if (res.ok) return await res.json();
+      try {
+        const res = await fetch(b.url, { headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(`Blob HTTP ${res.status} ${res.statusText}`);
+        const text = await res.text();
+        return JSON.parse(text);
+      } catch (fetchErr) {
+        console.error('fetch Blob 内容失败:', fetchErr.message, 'url:', (b.url || '').slice(0, 80));
+        throw new Error('BLOB_FETCH_FAIL: ' + fetchErr.message);
+      }
     }
   } catch (err) {
-    console.error('读取 Blob 数据失败:', err.message);
+    if (err.message.startsWith('BLOB_FETCH_FAIL')) throw err;
+    console.error('读取 Blob 头信息失败:', err.message);
   }
   return { records: [], groups: [] };
 }
