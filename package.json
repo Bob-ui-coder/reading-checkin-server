@@ -1,6 +1,7 @@
 {
   "name": "reading-checkin",
   "version": "2.0.0",
+  "type": "module",
   "description": "团队读书打卡 MVP",
   "scripts": {
     "start": "node server.js",
