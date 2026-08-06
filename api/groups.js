@@ -6,10 +6,6 @@ function cleanText(value, maxLength) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
-function json(res, data, status = 200) {
-  res.status(status).header('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(data));
-}
-
 function rewriteImage(url) {
   if (typeof url !== 'string') return url;
   return url
@@ -40,18 +36,20 @@ async function loadData() {
   return { records, groups };
 }
 
-module.exports = async function handler(req, res) {
-  const method = (req.method || 'GET').toUpperCase();
-  if (method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(204).end();
+export default {
+  async fetch(req) {
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,OPTIONS' } });
+    }
+    const data = await loadData();
+    const groups = (data.groups || []).map(g => ({
+      name: cleanText(g.name, 40),
+      leader: cleanText(g.leader, 30),
+      members: Array.isArray(g.members) ? g.members.map(m => cleanText(m, 30)).filter(Boolean) : []
+    }));
+    return new Response(JSON.stringify(groups), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
+    });
   }
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  const data = await loadData();
-  const groups = (data.groups || []).map(g => ({
-    name: cleanText(g.name, 40),
-    leader: cleanText(g.leader, 30),
-    members: Array.isArray(g.members) ? g.members.map(m => cleanText(m, 30)).filter(Boolean) : []
-  }));
-  return json(res, groups);
 };

@@ -1,3 +1,12 @@
 {
-  "version": 2
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/groups", "destination": "/api/groups" },
+    { "source": "/api/records", "destination": "/api/records" },
+    { "source": "/api/records/(.*)", "destination": "/api/records" },
+    { "source": "/api/checkin", "destination": "/api/checkin" },
+    { "source": "/api/ai-feedback", "destination": "/api/ai-feedback" },
+    { "source": "/(.*)", "destination": "/public/$1" }
+  ]
 }

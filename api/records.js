@@ -4,10 +4,6 @@ const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
 const GH_TOKEN = process.env.GITHUB_TOKEN || '';
 const REPO_DATA_URL = 'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin-server@main/data.json';
 
-function json(res, data, status = 200) {
-  res.status(status).header('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(data));
-}
-
 function rewriteImage(url) {
   if (typeof url !== 'string') return url;
   return url
@@ -54,57 +50,67 @@ async function saveData(data) {
 function requireAdmin(req) {
   const c = process.env.ADMIN_PASSWORD;
   if (!c) return { ok: false, status: 503, error: '服务器未配置管理密码' };
-  if ((req.headers['x-admin-password'] || '') !== c) return { ok: false, status: 401, error: '管理密码错误' };
+  if ((req.headers.get('x-admin-password') || '') !== c) return { ok: false, status: 401, error: '管理密码错误' };
   return { ok: true };
 }
 
-module.exports = async function handler(req, res) {
-  const method = (req.method || 'GET').toUpperCase();
-  if (method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'x-admin-password');
-    return res.status(204).end();
-  }
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' }
+  });
+}
 
-  if (method === 'GET') {
-    try {
-      const data = await loadData();
-      return json(res, data.records.sort((a, b) => Number(b.time) - Number(a.time)));
-    } catch (err) {
-      return json(res, { error: '读取记录失败: ' + err.message }, 500);
+export default {
+  async fetch(req) {
+    const method = (req.method || 'GET').toUpperCase();
+    if (method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'x-admin-password' }
+      });
     }
-  }
 
-  if (method === 'DELETE') {
-    const auth = requireAdmin(req);
-    if (!auth.ok) return json(res, { error: auth.error }, auth.status);
-    let name, day;
-    try {
-      const u = new URL(req.url, 'http://localhost');
-      const parts = u.pathname.split('/').filter(Boolean);
-      name = decodeURIComponent(parts[2] || '');
-      day = parts[3];
-    } catch (e) {}
-    if (!name || !day) {
-      const u = new URL(req.url, 'http://localhost');
-      name = name || u.searchParams.get('name') || '';
-      day = day || u.searchParams.get('day') || '';
+    if (method === 'GET') {
+      try {
+        const data = await loadData();
+        return json(data.records.sort((a, b) => Number(b.time) - Number(a.time)));
+      } catch (err) {
+        return json({ error: '读取记录失败: ' + err.message }, 500);
+      }
     }
-    if (!name || !day) return json(res, { error: '缺少 name 或 day 参数' }, 400);
-    try {
-      const data = await loadData();
-      const key = `${name}_${day}`;
-      const before = data.records.length;
-      data.records = data.records.filter(r => r.key !== key);
-      if (data.records.length === before) return json(res, { error: '未找到该记录' }, 404);
-      await saveData(data);
-      return json(res, { success: true, deleted: before - data.records.length });
-    } catch (err) {
-      return json(res, { error: '删除失败: ' + err.message }, 500);
-    }
-  }
 
-  return json(res, { error: '方法不允许' }, 405);
+    if (method === 'DELETE') {
+      const auth = requireAdmin(req);
+      if (!auth.ok) return json({ error: auth.error }, auth.status);
+      let name, day;
+      try {
+        const u = new URL(req.url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        name = decodeURIComponent(parts[2] || '');
+        day = parts[3];
+      } catch (e) {}
+      if (!name || !day) {
+        try {
+          const u = new URL(req.url);
+          name = name || u.searchParams.get('name') || '';
+          day = day || u.searchParams.get('day') || '';
+        } catch (e) {}
+      }
+      if (!name || !day) return json({ error: '缺少 name 或 day 参数' }, 400);
+      try {
+        const data = await loadData();
+        const key = `${name}_${day}`;
+        const before = data.records.length;
+        data.records = data.records.filter(r => r.key !== key);
+        if (data.records.length === before) return json({ error: '未找到该记录' }, 404);
+        await saveData(data);
+        return json({ success: true, deleted: before - data.records.length });
+      } catch (err) {
+        return json({ error: '删除失败: ' + err.message }, 500);
+      }
+    }
+
+    return json({ error: '方法不允许' }, 405);
+  }
 };

@@ -1,8 +1,7 @@
 {
   "name": "reading-checkin",
   "version": "2.0.0",
-  "description": "Express 驱动的团队读书打卡 MVP",
-  "main": "server.js",
+  "description": "团队读书打卡 MVP",
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
