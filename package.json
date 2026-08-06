@@ -8,5 +8,7 @@
     "test": "node --test",
     "migrate": "node scripts/migrate-data.js"
   },
-  "dependencies": {}
+  "dependencies": {
+    "express": "^4.21.0"
+  }
 }
