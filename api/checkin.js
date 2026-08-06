@@ -1,9 +1,9 @@
-// === 公共工具函数 ===
 const GIST_ID = process.env.GIST_ID || '9118572982a150ace89f2ba81ecb7999';
 const GIST_RAW = `https://gist.githubusercontent.com/Bob-ui-coder/${GIST_ID}/raw/data.json`;
 const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
 const GH_TOKEN = process.env.GITHUB_TOKEN || '';
 const REPO_DATA_URL = 'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin-server@main/data.json';
+
 function cleanText(v, m) { return typeof v === 'string' ? v.trim().slice(0, m) : ''; }
 function json(res, data, s = 200) { res.status(s).header('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(data)); }
 function rewriteImage(url) { if (typeof url !== 'string') return url; return url.replace('https://raw.githubusercontent.com/Bob-ui-coder/reading-checkin/main/docs/images/', 'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin@main/docs/images/').replace('/media/', 'https://cdn.jsdelivr.net/gh/Bob-ui-coder/reading-checkin-server@main/data/images/'); }
@@ -12,8 +12,7 @@ async function saveData(data) { if (!GH_TOKEN) throw new Error('未配置 GITHUB
 async function imageToUrl(input) { if (!input || typeof input !== 'string') return null; if (input.startsWith('data:')) { const c = input.indexOf(','); if (c <= 0) return null; if (!/image\//.test(input.slice(0, c))) return null; if (Math.ceil((input.slice(c + 1).length * 3) / 4) > 2 * 1024 * 1024) return false; return input; } if (/^https?:\/\//.test(input)) return input; return null; }
 function parseBody(req) { return new Promise((resolve, reject) => { let b = ''; req.on('data', c => { b += c.toString(); }); req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch (e) { reject(new Error('无效 JSON')); } }); req.on('error', reject); }); }
 
-// === checkin ===
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const method = (req.method || 'GET').toUpperCase();
   if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); return res.status(204).end(); }
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -31,4 +30,4 @@ export default async function handler(req, res) {
   if (idx >= 0) data.records[idx] = record; else data.records.push(record);
   await saveData(data);
   return json(res, { success: true, record }, idx >= 0 ? 200 : 201);
-}
+};

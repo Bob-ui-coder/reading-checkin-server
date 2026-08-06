@@ -2,8 +2,7 @@ function cleanText(v, m) { return typeof v === 'string' ? v.trim().slice(0, m) :
 function json(res, data, s = 200) { res.status(s).header('Content-Type', 'application/json; charset=utf-8').send(JSON.stringify(data)); }
 function parseBody(req) { return new Promise((resolve, reject) => { let b = ''; req.on('data', c => { b += c.toString(); }); req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch (e) { reject(new Error('无效 JSON')); } }); req.on('error', reject); }); }
 
-// === ai-feedback ===
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const method = (req.method || 'GET').toUpperCase();
   if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); return res.status(204).end(); }
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -26,4 +25,4 @@ export default async function handler(req, res) {
     if (!feedback) throw new Error('上游服务未返回内容');
     return json(res, { feedback });
   } catch (error) { console.error('AI 请求失败:', error.message); return json(res, { error: 'AI 教练暂时不可用，请稍后重试' }, 502); }
-}
+};
